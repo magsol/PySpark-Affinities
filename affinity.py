@@ -214,8 +214,8 @@ if __name__ == "__main__":
     # Required arguments.
     parser.add_argument("-i", "--input", required = True,
         help = "Path to an image. Any image!")
-    parser.add_argument("-o", "--output", required = True,
-        help = "Path to an output directory. If it doesn't exist, it is created.")
+    #parser.add_argument("-o", "--output", required = True,
+    #    help = "Path to an output directory. If it doesn't exist, it is created.")
 
     # Optional arguments.
     parser.add_argument("-s", "--sigma", type = float, default = 0.0,
@@ -231,7 +231,7 @@ if __name__ == "__main__":
     # Read in the image. Broadcast it and determine the indices of connected pixels.
     image = scipy.ndimage.imread(args['input'], flatten = True)
     IMAGE = sc.broadcast(np.ravel(image))
-    A = sc.parallelize(connectivity(image.shape[0], image.shape[1]))
+    A = sc.parallelize(connectivity(image.shape[0], image.shape[1]), sc.defaultParallelism * 4)
 
     # If sigma was not specified, we'll compute it ourselves. We do this by first
     # finding the *median absolute gray-level intensity difference* between all
@@ -251,12 +251,14 @@ if __name__ == "__main__":
 
     d = affinities.collect()
     num = image.shape[0] * image.shape[1]
-    A1 = np.zeros(shape = (num, num))
+    A1 = sparse.dok_matrix((num, num), dtype = np.float) 
     for rowid, values in d:
         for k, v in values.iteritems():
             A1[rowid, k] = v
     diag = np.arange(num, dtype = np.int)
     A1[diag, diag] = 1.0
-    A2 = image_affinities(image)
-    np.testing.assert_array_equal(A1, A2)
+    #A2 = image_affinities(image)
+    #np.testing.assert_array_equal(A1, A2)
+    print A1.shape
+    print A1
 
