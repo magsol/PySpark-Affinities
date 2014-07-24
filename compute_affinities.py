@@ -133,10 +133,6 @@ if __name__ == "__main__":
                 A1[rowid, k] = v
         diag = np.arange(num, dtype = np.int)
         A1[diag, diag] = 1.0
-        #A2 = image_affinities(image)
-        #np.testing.assert_array_equal(A1, A2)
-        print A1.shape
-        print A1
     else:
         affinities = A.map(pairwise_points).sortByKey().collect()
 
