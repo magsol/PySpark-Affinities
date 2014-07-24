@@ -7,30 +7,27 @@ import scipy.ndimage
 import scipy.sparse as sparse
 import sklearn.metrics.pairwise as pairwise
 
-from image_affinities import connectivity
+from image_affinities import connectivity, parse_coordinates
 
-def estimate_sigma(x):
-    if TYPE.value == 'image':
-        return np.abs(DATA.value[x[0]] - DATA.value[x[1]])
-    else:  # type is text
-        x1 = x[0]
-        x2 = x[1]
-        _, data1 = int(x1[0]), x1[1]
-        _, data2 = int(x2[0]), x2[1]
+def distance_threshold(z):
+    """
+    Firstly, this method is only invoked if the distance threshold epsilon is set.
+    Secondly, this method returns True if the pair of points being compared
+    fall within that distance threshold.
+    """
+    # Parse out the floating point coordinates.
+    x = parse_coordinates(z[0][1])
+    y = parse_coordinates(z[1][1])
 
-        # Now parse out the floating point coordinates.
-        x = np.array(map(float, data1.strip().split(",")))
-        y = np.array(map(float, data2.strip().split(",")))
-        return la.norm(x - y)
+    # All done!
+    return la.norm(x - y) < EPSILON.value
 
 def pairwise_pixels(pixels):
     """
     Computes the affinity for a pair of pixels.
     """
     i, j = pixels
-    image = DATA.value
-    sigma = SIGMA.value
-    rbf = pairwise.rbf_kernel(image[i], image[j], gamma = sigma)[0, 0]
+    rbf = pairwise.rbf_kernel(IMAGE.value[i], IMAGE.value[j], gamma = SIGMA.value)[0, 0]
     return [(i, [j, rbf]), (j, [i, rbf])]
 
 def pixel_row_vector(affinities):
@@ -40,28 +37,16 @@ def pixel_row_vector(affinities):
     rowid, values = affinities
     return [rowid, {v[0]: v[1] for v in values}]
 
-def pairwise_points(x):
+def pairwise_points(z):
     """
-    Computes the RBF affinity for a pair of points.
+    Computes the RBF affinity for a pair of Cartesian points.
     """
-    x1 = x[0]
-    x2 = x[1]
-    i1, data1 = int(x1[0]), x1[1]
-    i2, data2 = int(x2[0]), x2[1]
+    # Parse out floating point coordinates.
+    x = parse_coordinates(z[0][1])
+    y = parse_coordinates(z[1][1])
 
-    # Now parse out the floating point coordinates.
-    x = np.array(map(float, data1.strip().split(",")))
-    y = np.array(map(float, data2.strip().split(",")))
-
-    # Find the RBF kernel between them, assuming their distance is within
-    # the threshold.
-    epsilon = DATA.value
-    sigma = SIGMA.value
-
-    # Are these two points close enough together?
-    threshold = la.norm(x - y) < epsilon if epsilon > 0.0 else True
-    rbf = pairwise.rbf_kernel(x, y, gamma = sigma)[0, 0] if threshold else 0.0
-    return [i1, [i2, rbf]]
+    # Find the RBF kernel between them.
+    return [int(z[0][0]), [int(z[1][0]), pairwise.rbf_kernel(x, y, gamma = SIGMA.value)[0, 0]]]
 
     # We don't need to return a pair of tuples, because all pairings
     # are enumerated; there will be another case where the values of
@@ -109,22 +94,29 @@ if __name__ == "__main__":
     if args["sub_name"] == "image":
         # Read in the image. Broadcast it and determine the indices of connected pixels.
         image = scipy.ndimage.imread(args['input'], flatten = True)
-        DATA = sc.broadcast(image.ravel())
+        IMAGE = sc.broadcast(image.ravel())
         A = sc.parallelize(connectivity(image.shape[0], image.shape[1]), sc.defaultParallelism * 4)
     else:
         # Read the input file, index each data point, and parallelize to an RDD.
         rawdata = np.loadtxt(args['input'], dtype = np.str, delimiter = "\n")
         indexed = np.vstack([np.arange(rawdata.shape[0]), rawdata]).T
-        DATA = sc.broadcast(args['epsilon'])
+        EPSILON = sc.broadcast(args['epsilon'])
         D = sc.parallelize(indexed)
         A = D.cartesian(D)
+        if EPSILON.value > 0.0:
+            A = A.filter(distance_threshold)
 
     # If sigma was not specified, we'll compute it ourselves. We do this by first
-    # finding the *median absolute gray-level intensity difference* between all
-    # connected pixels, and use that to compute sigma.
+    # finding the *median difference* between all points (connected pixels or Cartesian
+    # data that passes the distance threshold), and use that to compute sigma.
     if sigma <= 0.0:
         d = np.median(np.array(
-                A.map(estimate_sigma)
+                A.map(
+                    lambda x:
+                        np.abs(IMAGE.value[x[0]] - IMAGE.value[x[1]])
+                        if TYPE.value == 'image' else
+                        la.norm(parse_coordinates(x[0][1]) - parse_coordinates(x[1][1]))
+                     )
                 .collect()))
         sigma = 1.0 / (2 * ((d * q) ** 2))
 
@@ -146,6 +138,6 @@ if __name__ == "__main__":
         print A1.shape
         print A1
     else:
-        affinities = A.map(pairwise_points).filter(lambda x: x[1][1] > 0.0).sortByKey().collect()
+        affinities = A.map(pairwise_points).sortByKey().collect()
 
         print 'Of %sx%s possible pairs, we have %s.' % (rawdata.shape[0], rawdata.shape[0], len(affinities))

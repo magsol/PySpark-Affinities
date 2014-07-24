@@ -1,5 +1,15 @@
 import numpy as np
 
+def parse_coordinates(x):
+    """
+    Takes a string of the format:
+
+    "x1,x2,x3,...,xn"
+
+    and returns a numpy array containing the floating point data.
+    """
+    return np.array(map(float, x.strip().split(",")))
+
 def connectivity(nx, ny, neighborhood = 8):
     """
     Comparable to scikit-learn's grid_to_graph method, though this stops short of computing a full graph and instead simply returns indices in an image that are connected.
